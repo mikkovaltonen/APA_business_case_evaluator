@@ -8,6 +8,8 @@ import { useAuth } from '../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { loadLatestPrompt } from '../lib/firestoreService';
+import { sessionService, ChatSession } from '../lib/sessionService';
+import { erpApiService } from '../lib/erpApiService';
 
 interface ProfessionalBuyerChatProps {
   onLogout?: () => void;
@@ -15,6 +17,37 @@ interface ProfessionalBuyerChatProps {
 
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
 const geminiModel = import.meta.env.VITE_GEMINI_MODEL || 'gemini-2.5-pro-preview-03-25';
+
+// ERP Function Definition for Gemini
+const searchERPFunction = {
+  name: "search_erp_data",
+  description: "Search ERP/purchase order data with various criteria. Use this when user asks about suppliers, orders, purchases, products, or wants to find specific data from their ERP system.",
+  parameters: {
+    type: "object",
+    properties: {
+      supplierName: {
+        type: "string",
+        description: "Supplier/vendor name or partial name to search for"
+      },
+      productDescription: {
+        type: "string", 
+        description: "Product description or partial description to search for"
+      },
+      dateFrom: {
+        type: "string",
+        description: "Search from date (YYYY-MM-DD format). Filters by 'Receive By' column in the Excel data."
+      },
+      dateTo: {
+        type: "string",
+        description: "Search to date (YYYY-MM-DD format). Filters by 'Receive By' column in the Excel data."
+      },
+      buyerName: {
+        type: "string",
+        description: "Buyer/purchaser name or partial name to search for"
+      }
+    }
+  }
+};
 
 // Debug: Log Gemini API config
 console.log('Gemini API config:', {
@@ -64,23 +97,84 @@ const ProfessionalBuyerChat: React.FC<ProfessionalBuyerChatProps> = ({ onLogout 
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [sessionActive, setSessionActive] = useState(false);
+  const [chatSession, setChatSession] = useState<ChatSession | null>(null);
+  const [sessionInitializing, setSessionInitializing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  // Initialize chat with welcome message
+  // Initialize chat session with context
   React.useEffect(() => {
-    if (!sessionActive) {
-      const welcomeMessage: Message = {
-        role: 'model',
-        parts: [{
-          text: "Hello! I'm your Professional Buyer AI Assistant. I'm here to help you optimize your procurement processes, negotiate better deals, and achieve significant cost savings. What can I help you with today?"
-        }]
-      };
-      setMessages([welcomeMessage]);
-      setSessionActive(true);
-    }
-  }, [sessionActive]);
+    const initializeSession = async () => {
+      if (!sessionActive && user && !sessionInitializing) {
+        setSessionInitializing(true);
+        try {
+          // Initialize session with system prompt + knowledge documents
+          const session = await sessionService.initializeChatSession(user.uid);
+          setChatSession(session);
+          
+          // Check if this is a new user (no documents loaded)
+          const isLikelyNewUser = session.documentsUsed.length === 0;
+          
+          const welcomeMessage: Message = {
+            role: 'model',
+            parts: [{
+              text: isLikelyNewUser 
+                ? `🎉 **Welcome to Professional Buyer AI Assistant!**
+
+I'm here to transform how you handle procurement and purchasing. As your AI-powered procurement expert, I can help you:
+
+**🎯 Get Started (recommended):**
+• **Load Sample Data**: Go to Admin panel → Load sample knowledge documents and ERP data to try me out
+• **Upload Your Files**: Add your own procurement policies and Excel purchase data  
+• **Ask Questions**: "What suppliers do we use?" or "Find me laptop purchases from last quarter"
+
+**💡 My Special Capabilities:**
+✅ Real-time access to your ERP/purchase data through advanced function calling
+✅ Analysis of your internal procurement documents and policies  
+✅ Professional buyer expertise for cost optimization and supplier management
+
+**Ready to explore?** Try asking me "Load some sample data so I can see what you can do" or visit the Admin panel to upload your own files!
+
+What would you like to start with?`
+                : `Hello! I'm your Professional Buyer AI Assistant. I'm here to help you optimize your procurement processes, negotiate better deals, and achieve significant cost savings.
+
+📚 **Knowledge Base Loaded:** ${session.documentsUsed.length} document(s) available for reference.
+
+What can I help you with today?`
+            }]
+          };
+          setMessages([welcomeMessage]);
+          setSessionActive(true);
+          
+          if (isLikelyNewUser) {
+            toast.success("🎉 Welcome! Your AI assistant is ready. Visit the Admin panel to load sample data and explore capabilities.", {
+              duration: 6000
+            });
+          } else {
+            toast.success(`Session initialized with ${session.documentsUsed.length} knowledge document(s)`);
+          }
+        } catch (error) {
+          console.error('Failed to initialize session:', error);
+          toast.error('Failed to load knowledge base. Using default settings.');
+          
+          // Fallback to basic welcome message
+          const welcomeMessage: Message = {
+            role: 'model',
+            parts: [{
+              text: "Hello! I'm your Professional Buyer AI Assistant. I'm here to help you optimize your procurement processes, negotiate better deals, and achieve significant cost savings. What can I help you with today?"
+            }]
+          };
+          setMessages([welcomeMessage]);
+          setSessionActive(true);
+        } finally {
+          setSessionInitializing(false);
+        }
+      }
+    };
+
+    initializeSession();
+  }, [sessionActive, user, sessionInitializing]);
 
   const quickActions = [
     "Use prenegotiated discount prices",
@@ -104,22 +198,28 @@ const ProfessionalBuyerChat: React.FC<ProfessionalBuyerChatProps> = ({ onLogout 
     setIsLoading(true);
 
     try {
-      // Load the latest system prompt version
+      // Use session context if available, otherwise fallback to loading prompt
       let systemPrompt = '';
-      if (user?.email) {
-        try {
-          const latestPrompt = await loadLatestPrompt(user.email);
-          if (latestPrompt) {
-            systemPrompt = latestPrompt;
+      
+      if (chatSession) {
+        // Use the full context from initialized session (system prompt + knowledge documents)
+        systemPrompt = chatSession.fullContext;
+      } else {
+        // Fallback: try to load latest prompt for this user
+        if (user?.uid) {
+          try {
+            const latestPrompt = await loadLatestPrompt(user.uid);
+            if (latestPrompt) {
+              systemPrompt = latestPrompt;
+            }
+          } catch (error) {
+            console.error('Error loading latest prompt:', error);
           }
-        } catch (error) {
-          console.error('Error loading latest prompt:', error);
         }
-      }
 
-      // Fallback to default procurement prompt
-      if (!systemPrompt) {
-        systemPrompt = `You are a Professional Buyer AI Assistant. You help users optimize procurement processes, negotiate better deals, and achieve cost savings. 
+        // Final fallback to default procurement prompt
+        if (!systemPrompt) {
+          systemPrompt = `You are a Professional Buyer AI Assistant. You help users optimize procurement processes, negotiate better deals, and achieve cost savings. 
 
 Key capabilities:
 - Provide expert procurement advice
@@ -131,11 +231,15 @@ Key capabilities:
 - Help with contract analysis
 
 Be helpful, professional, and focus on practical procurement solutions.`;
+        }
       }
 
       const model = genAI.getGenerativeModel({
         model: geminiModel,
         generationConfig: { temperature: 0.2 },
+        tools: [
+          { functionDeclarations: [searchERPFunction] }
+        ]
       });
 
       const history = messages.map(msg => ({ role: msg.role, parts: msg.parts }));
@@ -144,14 +248,118 @@ Be helpful, professional, and focus on practical procurement solutions.`;
           { role: 'user', parts: [{ text: systemPrompt }] },
           ...history, 
           { role: 'user', parts: [{ text: textToSend }] }
-        ],
-        tools: [{ googleSearch: {} }]
+        ]
       });
 
       const response = result.response;
       if (response && response.candidates && response.candidates.length > 0) {
         const candidate = response.candidates[0];
         const content = candidate.content;
+        
+        // Check for function calls
+        if (content?.parts) {
+          for (const part of content.parts) {
+            if (part.functionCall) {
+              const functionName = part.functionCall.name;
+              const functionArgs = part.functionCall.args;
+              
+              if (functionName === 'search_erp_data') {
+                try {
+                  const aiRequestId = Math.random().toString(36).substring(2, 8);
+                  
+                  // Log AI function call details
+                  console.log('🤖 AI FUNCTION CALL [' + aiRequestId + ']:', {
+                    triggered_by_user_message: textToSend,
+                    function_name: functionName,
+                    ai_generated_parameters: functionArgs,
+                    timestamp: new Date().toISOString(),
+                    ai_request_id: aiRequestId
+                  });
+
+                  // Execute ERP search (this will generate its own logs with request ID)
+                  const searchResult = await erpApiService.searchRecords(user!.uid, functionArgs);
+                  
+                  // Log consolidated AI + ERP results
+                  console.log('🔗 AI-ERP INTEGRATION RESULT [' + aiRequestId + ']:', {
+                    user_query: textToSend,
+                    ai_function_call: functionName,
+                    ai_parameters: functionArgs,
+                    erp_result_summary: {
+                      totalRecords: searchResult.totalCount,
+                      processingTime: searchResult.processingTimeMs + 'ms',
+                      hasData: searchResult.records.length > 0
+                    },
+                    execution_timestamp: new Date().toISOString(),
+                    ai_request_id: aiRequestId
+                  });
+                  
+                  // Create function response
+                  const functionResponse = {
+                    role: 'model' as const,
+                    parts: [{
+                      functionResponse: {
+                        name: functionName,
+                        response: {
+                          records: searchResult.records,
+                          totalCount: searchResult.totalCount,
+                          processingTimeMs: searchResult.processingTimeMs
+                        }
+                      }
+                    }]
+                  };
+                  
+                  // Generate follow-up response with function results
+                  const followUpResult = await model.generateContent({
+                    contents: [
+                      { role: 'user', parts: [{ text: systemPrompt }] },
+                      ...history,
+                      { role: 'user', parts: [{ text: textToSend }] },
+                      { role: 'model', parts: [part] }, // Original function call
+                      functionResponse // Function response
+                    ]
+                  });
+                  
+                  const followUpResponse = followUpResult.response;
+                  if (followUpResponse?.candidates?.[0]?.content) {
+                    const aiResponseText = followUpResponse.candidates[0].content?.parts?.[0]?.text || "No response text";
+                    
+                    // Log AI's final response
+                    console.log('💬 AI FINAL RESPONSE [' + aiRequestId + ']:', {
+                      response_text_length: aiResponseText.length,
+                      response_preview: aiResponseText.substring(0, 200) + (aiResponseText.length > 200 ? '...' : ''),
+                      included_erp_data: searchResult.totalCount > 0,
+                      timestamp: new Date().toISOString(),
+                      ai_request_id: aiRequestId
+                    });
+                    
+                    setMessages(prev => [...prev, {
+                      role: 'model',
+                      parts: followUpResponse.candidates[0].content?.parts || [{ text: "I executed the search but couldn't format the response." }]
+                    }]);
+                  }
+                  return;
+                } catch (functionError) {
+                  // Log AI function call error
+                  console.log('❌ AI FUNCTION CALL ERROR [' + aiRequestId + ']:', {
+                    user_query: textToSend,
+                    function_name: functionName,
+                    ai_parameters: functionArgs,
+                    error: functionError instanceof Error ? functionError.message : 'Unknown error',
+                    timestamp: new Date().toISOString(),
+                    ai_request_id: aiRequestId
+                  });
+                  
+                  console.error('Function execution failed:', functionError);
+                  setMessages(prev => [...prev, {
+                    role: 'model',
+                    parts: [{ text: `I tried to search your ERP data but encountered an error: ${functionError instanceof Error ? functionError.message : 'Unknown error'}. Please make sure you have uploaded your ERP data in the Admin panel.` }]
+                  }]);
+                  return;
+                }
+              }
+            }
+          }
+        }
         
         let processedCitationMetadata: { citationSources: CitationSource[] } | undefined = undefined;
         if (candidate.citationMetadata && candidate.citationMetadata.citationSources) {
@@ -184,11 +392,26 @@ Be helpful, professional, and focus on practical procurement solutions.`;
     }
   };
 
-  const handleResetChat = () => {
+  const handleResetChat = async () => {
     setMessages([]);
     setSessionActive(false);
+    setChatSession(null);
     setInput('');
     toast.success('Chat reset successfully');
+    
+    // Reinitialize session with fresh context
+    if (user) {
+      setSessionInitializing(true);
+      try {
+        const session = await sessionService.initializeChatSession(user.uid);
+        setChatSession(session);
+        toast.success('Session refreshed with latest knowledge base');
+      } catch (error) {
+        console.error('Failed to refresh session:', error);
+      } finally {
+        setSessionInitializing(false);
+      }
+    }
   };
 
   const handleAttachDocuments = () => {
@@ -203,6 +426,17 @@ Be helpful, professional, and focus on practical procurement solutions.`;
     <div className="flex flex-col h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-black text-white p-8 text-center relative">
+        {/* User info top left */}
+        {user && (
+          <div className="absolute top-4 left-4 text-sm text-gray-300">
+            <span className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+              Logged in as: <span className="text-white font-medium">{user.email}</span>
+            </span>
+          </div>
+        )}
+        
+        {/* Action buttons top right */}
         <div className="absolute top-4 right-4 flex gap-2">
           <Button
             variant="ghost"
@@ -273,6 +507,20 @@ Be helpful, professional, and focus on practical procurement solutions.`;
       {/* Chat Messages */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         <div className="max-w-4xl mx-auto space-y-6">
+          {sessionInitializing && (
+            <div className="flex justify-start">
+              <div className="flex items-start space-x-3">
+                <div className="flex-shrink-0 w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
+                  <Bot className="h-5 w-5 text-gray-700" />
+                </div>
+                <div className="bg-white shadow-sm border rounded-2xl px-6 py-4 flex items-center space-x-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-gray-700" />
+                  <span className="text-sm text-gray-600">Initializing AI with your knowledge base...</span>
+                </div>
+              </div>
+            </div>
+          )}
+          
           {messages.map((message, index) => (
             <div
               key={index}
