@@ -1,13 +1,16 @@
 import React, { useState, useRef } from 'react';
 import { GoogleGenerativeAI, Part } from '@google/generative-ai';
-import { Loader2, Send, RotateCcw, Paperclip, Bot, LogOut, Settings } from "lucide-react";
+import { Loader2, Send, RotateCcw, Paperclip, Bot, LogOut, Settings, ThumbsUp, ThumbsDown } from "lucide-react";
 import ReactMarkdown from 'react-markdown';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import { useAuth } from '../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { loadLatestPrompt } from '../lib/firestoreService';
+import { loadLatestPrompt, createContinuousImprovementSession, addTechnicalLog, setUserFeedback } from '../lib/firestoreService';
 import { sessionService, ChatSession } from '../lib/sessionService';
 import { erpApiService } from '../lib/erpApiService';
 
@@ -102,6 +105,17 @@ const ProfessionalBuyerChat: React.FC<ProfessionalBuyerChatProps> = ({ onLogout 
   const inputRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
   const navigate = useNavigate();
+  
+  // Continuous improvement tracking
+  const [continuousImprovementSessionId, setContinuousImprovementSessionId] = useState<string | null>(null);
+  const [chatSessionKey] = useState<string>(() => `chat_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`);
+  const [currentPromptKey, setCurrentPromptKey] = useState<string | null>(null);
+  
+  // Feedback dialog
+  const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
+  const [pendingFeedback, setPendingFeedback] = useState<'thumbs_up' | 'thumbs_down' | null>(null);
+  const [pendingMessageIndex, setPendingMessageIndex] = useState<number | null>(null);
+  const [feedbackComment, setFeedbackComment] = useState('');
 
   // Initialize chat session with context
   React.useEffect(() => {
@@ -192,10 +206,23 @@ What can I help you with today?`
     const textToSend = messageText || input;
     if (!textToSend.trim() || isLoading) return;
 
+    // Initialize continuous improvement if not already done
+    if (!continuousImprovementSessionId) {
+      await initializeContinuousImprovement();
+    }
+
     const userMessage: Message = { role: 'user', parts: [{ text: textToSend }] };
     setMessages(prev => [...prev, userMessage]);
     if (!messageText) setInput('');
     setIsLoading(true);
+    
+    // Log user message
+    if (continuousImprovementSessionId) {
+      await addTechnicalLog(continuousImprovementSessionId, {
+        event: 'user_message',
+        userMessage: textToSend
+      });
+    }
 
     try {
       // Use session context if available, otherwise fallback to loading prompt
@@ -217,20 +244,9 @@ What can I help you with today?`
           }
         }
 
-        // Final fallback to default procurement prompt
+        // No fallback - if no prompt available, show error
         if (!systemPrompt) {
-          systemPrompt = `You are a Professional Buyer AI Assistant. You help users optimize procurement processes, negotiate better deals, and achieve cost savings. 
-
-Key capabilities:
-- Provide expert procurement advice
-- Help with supplier negotiations
-- Suggest cost optimization strategies
-- Assist with purchase order creation
-- Guide approval processes
-- Recommend preferred suppliers
-- Help with contract analysis
-
-Be helpful, professional, and focus on practical procurement solutions.`;
+          throw new Error('No system prompt configured. Please visit Admin panel to set up your prompt.');
         }
       }
 
@@ -276,6 +292,17 @@ Be helpful, professional, and focus on practical procurement solutions.`;
                     ai_request_id: aiRequestId
                   });
 
+                  // Log function call triggered
+                  if (continuousImprovementSessionId) {
+                    await addTechnicalLog(continuousImprovementSessionId, {
+                      event: 'function_call_triggered',
+                      userMessage: textToSend,
+                      functionName: functionName,
+                      functionInputs: functionArgs,
+                      aiRequestId: aiRequestId
+                    });
+                  }
+
                   // Execute ERP search (this will generate its own logs with request ID)
                   const searchResult = await erpApiService.searchRecords(user!.uid, functionArgs);
                   
@@ -292,6 +319,22 @@ Be helpful, professional, and focus on practical procurement solutions.`;
                     execution_timestamp: new Date().toISOString(),
                     ai_request_id: aiRequestId
                   });
+
+                  // Log function call success
+                  if (continuousImprovementSessionId) {
+                    await addTechnicalLog(continuousImprovementSessionId, {
+                      event: 'function_call_success',
+                      functionName: functionName,
+                      functionInputs: functionArgs,
+                      functionOutputs: {
+                        totalRecords: searchResult.totalCount,
+                        processingTimeMs: searchResult.processingTimeMs,
+                        hasData: searchResult.records.length > 0,
+                        recordsPreview: searchResult.records.slice(0, 3) // First 3 records as preview
+                      },
+                      aiRequestId: aiRequestId
+                    });
+                  }
                   
                   // Create function response
                   const functionResponse = {
@@ -331,6 +374,15 @@ Be helpful, professional, and focus on practical procurement solutions.`;
                       timestamp: new Date().toISOString(),
                       ai_request_id: aiRequestId
                     });
+
+                    // Log AI response
+                    if (continuousImprovementSessionId) {
+                      await addTechnicalLog(continuousImprovementSessionId, {
+                        event: 'ai_response',
+                        aiResponse: aiResponseText.substring(0, 500), // First 500 chars to avoid too much data
+                        aiRequestId: aiRequestId
+                      });
+                    }
                     
                     setMessages(prev => [...prev, {
                       role: 'model',
@@ -348,6 +400,17 @@ Be helpful, professional, and focus on practical procurement solutions.`;
                     timestamp: new Date().toISOString(),
                     ai_request_id: aiRequestId
                   });
+
+                  // Log function call error
+                  if (continuousImprovementSessionId) {
+                    await addTechnicalLog(continuousImprovementSessionId, {
+                      event: 'function_call_error',
+                      functionName: functionName,
+                      functionInputs: functionArgs,
+                      errorMessage: functionError instanceof Error ? functionError.message : 'Unknown error',
+                      aiRequestId: aiRequestId
+                    });
+                  }
                   
                   console.error('Function execution failed:', functionError);
                   setMessages(prev => [...prev, {
@@ -364,6 +427,15 @@ Be helpful, professional, and focus on practical procurement solutions.`;
         let processedCitationMetadata: { citationSources: CitationSource[] } | undefined = undefined;
         if (candidate.citationMetadata && candidate.citationMetadata.citationSources) {
           processedCitationMetadata = candidate.citationMetadata;
+        }
+
+        // Log regular AI response (non-function call)
+        const aiResponseText = content?.parts?.[0]?.text || "No response text";
+        if (continuousImprovementSessionId) {
+          await addTechnicalLog(continuousImprovementSessionId, {
+            event: 'ai_response',
+            aiResponse: aiResponseText.substring(0, 500) // First 500 chars to avoid too much data
+          });
         }
 
         setMessages(prev => [...prev, {
@@ -420,6 +492,70 @@ Be helpful, professional, and focus on practical procurement solutions.`;
 
   const handleOpenAdmin = () => {
     navigate('/admin');
+  };
+  
+  // Initialize continuous improvement session when user starts chatting
+  const initializeContinuousImprovement = async () => {
+    if (!user || continuousImprovementSessionId) return;
+    
+    try {
+      // For now, use a default prompt key if we don't have the actual one
+      // This should be updated when the user selects/creates a prompt version
+      const promptKey = currentPromptKey || `${user.email?.split('@')[0] || 'user'}_v1`;
+      const sessionId = await createContinuousImprovementSession(promptKey, chatSessionKey, user.uid);
+      setContinuousImprovementSessionId(sessionId);
+      console.log('📊 Continuous improvement session initialized:', sessionId);
+    } catch (error) {
+      console.error('Failed to initialize continuous improvement session:', error);
+    }
+  };
+
+  // Handle user feedback for specific message - opens dialog
+  const handleFeedback = async (feedback: 'thumbs_up' | 'thumbs_down', messageIndex: number) => {
+    if (!continuousImprovementSessionId) {
+      await initializeContinuousImprovement();
+    }
+    
+    // Store pending feedback and open dialog
+    setPendingFeedback(feedback);
+    setPendingMessageIndex(messageIndex);
+    setFeedbackComment('');
+    setFeedbackDialogOpen(true);
+  };
+
+  // Submit feedback with optional comment
+  const submitFeedback = async () => {
+    if (!continuousImprovementSessionId || !pendingFeedback || pendingMessageIndex === null) {
+      return;
+    }
+
+    try {
+      // Add message context to the feedback log
+      await addTechnicalLog(continuousImprovementSessionId, {
+        event: 'ai_response',
+        aiResponse: `User feedback for message ${pendingMessageIndex}: ${pendingFeedback}${feedbackComment ? ` - Comment: ${feedbackComment}` : ''}`,
+      });
+      
+      await setUserFeedback(continuousImprovementSessionId, pendingFeedback, feedbackComment || undefined);
+      
+      setFeedbackDialogOpen(false);
+      setPendingFeedback(null);
+      setPendingMessageIndex(null);
+      setFeedbackComment('');
+      
+      toast.success(pendingFeedback === 'thumbs_up' ? '👍 Thanks for the positive feedback!' : '👎 Thanks for the feedback - we\'ll improve!');
+    } catch (error) {
+      console.error('Failed to save feedback:', error);
+      toast.error('Failed to save feedback');
+    }
+  };
+
+  // Cancel feedback dialog
+  const cancelFeedback = () => {
+    setFeedbackDialogOpen(false);
+    setPendingFeedback(null);
+    setPendingMessageIndex(null);
+    setFeedbackComment('');
   };
 
   return (
@@ -526,36 +662,63 @@ Be helpful, professional, and focus on practical procurement solutions.`;
               key={index}
               className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              <div className="flex items-start space-x-3 max-w-3xl">
+              <div className="flex items-start space-x-3 max-w-3xl w-full">
                 {message.role === 'model' && (
                   <div className="flex-shrink-0 w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
                     <Bot className="h-5 w-5 text-gray-700" />
                   </div>
                 )}
-                <div
-                  className={`px-6 py-4 rounded-2xl ${
-                    message.role === 'user'
-                      ? 'bg-black text-white ml-auto'
-                      : 'bg-white shadow-sm border'
-                  }`}
-                >
-                  {message.parts.map((part, partIndex) => (
-                    <div key={partIndex}>
-                      {part.text && (
-                        <div className={`prose ${message.role === 'user' ? 'prose-invert' : ''} prose-sm max-w-none`}>
-                          <ReactMarkdown>
-                            {(() => {
-                              const { originalText, formattedSources } = processTextWithCitations(
-                                part.text,
-                                message.citationMetadata?.citationSources
-                              );
-                              return originalText + (formattedSources.length > 0 ? '\n\n**Sources:**\n' + formattedSources.join('\n') : '');
-                            })()}
-                          </ReactMarkdown>
-                        </div>
-                      )}
+                <div className="flex flex-col space-y-2 flex-1">
+                  <div
+                    className={`px-6 py-4 rounded-2xl ${
+                      message.role === 'user'
+                        ? 'bg-black text-white ml-auto max-w-lg'
+                        : 'bg-white shadow-sm border'
+                    }`}
+                  >
+                    {message.parts.map((part, partIndex) => (
+                      <div key={partIndex}>
+                        {part.text && (
+                          <div className={`prose ${message.role === 'user' ? 'prose-invert' : ''} prose-sm max-w-none`}>
+                            <ReactMarkdown>
+                              {(() => {
+                                const { originalText, formattedSources } = processTextWithCitations(
+                                  part.text,
+                                  message.citationMetadata?.citationSources
+                                );
+                                return originalText + (formattedSources.length > 0 ? '\n\n**Sources:**\n' + formattedSources.join('\n') : '');
+                              })()}
+                            </ReactMarkdown>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* Feedback buttons for AI responses only */}
+                  {message.role === 'model' && (
+                    <div className="flex items-center space-x-2 ml-2">
+                      <span className="text-xs text-gray-500">Was this helpful?</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleFeedback('thumbs_up', index)}
+                        className="text-gray-500 hover:text-green-600 hover:bg-green-50 p-1 h-auto"
+                        title="Good response"
+                      >
+                        <ThumbsUp className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleFeedback('thumbs_down', index)}
+                        className="text-gray-500 hover:text-red-600 hover:bg-red-50 p-1 h-auto"
+                        title="Poor response"
+                      >
+                        <ThumbsDown className="h-3 w-3" />
+                      </Button>
                     </div>
-                  ))}
+                  )}
                 </div>
               </div>
             </div>
@@ -602,6 +765,60 @@ Be helpful, professional, and focus on practical procurement solutions.`;
           </div>
         </div>
       </div>
+
+      {/* Feedback Dialog */}
+      <Dialog open={feedbackDialogOpen} onOpenChange={setFeedbackDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {pendingFeedback === 'thumbs_up' ? (
+                <ThumbsUp className="h-5 w-5 text-green-600" />
+              ) : (
+                <ThumbsDown className="h-5 w-5 text-red-600" />
+              )}
+              {pendingFeedback === 'thumbs_up' ? 'Positive feedback' : 'Feedback for improvement'}
+            </DialogTitle>
+            <DialogDescription>
+              {pendingFeedback === 'thumbs_up' 
+                ? 'Great! What did you like about this response?' 
+                : 'Help us improve! What could be better about this response?'
+              }
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            
+            <div className="space-y-2">
+              <Label htmlFor="feedback-comment">Comment (optional)</Label>
+              <Textarea
+                id="feedback-comment"
+                placeholder={pendingFeedback === 'thumbs_up' 
+                  ? 'What worked well? Any specific aspects you found helpful?'
+                  : 'What was missing or incorrect? How could we improve?'
+                }
+                value={feedbackComment}
+                onChange={(e) => setFeedbackComment(e.target.value)}
+                className="min-h-[100px]"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={cancelFeedback}
+            >
+              Skip
+            </Button>
+            <Button
+              onClick={submitFeedback}
+              className={pendingFeedback === 'thumbs_up' ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700'}
+            >
+              Submit Feedback
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
