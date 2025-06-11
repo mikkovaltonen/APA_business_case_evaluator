@@ -6,21 +6,13 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { 
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Loader2, Save, History, Star, Clock } from "lucide-react";
+import { Loader2, Save, History, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { 
   SystemPromptVersion, 
   savePromptVersion, 
   loadLatestPrompt, 
   getPromptHistory,
-  updatePromptEvaluation,
   getPromptVersion
 } from "@/lib/firestoreService";
 import { useAuth } from "@/hooks/useAuth";
@@ -41,14 +33,35 @@ const PromptVersionManager: React.FC<PromptVersionManagerProps> = ({
   const [versions, setVersions] = useState<SystemPromptVersion[]>([]);
   const [selectedVersion, setSelectedVersion] = useState<SystemPromptVersion | null>(null);
   const [activeTab, setActiveTab] = useState<'editor' | 'history'>('editor');
-  const [aiModel, setAiModel] = useState('gemini-2.5-flash-preview-04-17');
+
+  // Sample prompt - loaded from file or fallback
+  const [samplePrompt, setSamplePrompt] = useState<string>('');
+
+  // Load sample prompt from file
+  useEffect(() => {
+    const loadSamplePrompt = async () => {
+      try {
+        const response = await fetch('/sample_promtp.md');
+        if (response.ok) {
+          const content = await response.text();
+          setSamplePrompt(content.trim()); // Use exactly what's in the file
+        } else {
+          console.error('Failed to load sample prompt: HTTP', response.status);
+        }
+      } catch (error) {
+        console.error('Failed to load sample prompt:', error);
+      }
+    };
+
+    loadSamplePrompt();
+  }, []);
 
   // Load initial data
   useEffect(() => {
-    if (user?.email) {
+    if (user?.uid) {
       loadInitialData();
     }
-  }, [user?.email]);
+  }, [user?.uid]);
 
   // Update parent when prompt changes
   useEffect(() => {
@@ -58,25 +71,17 @@ const PromptVersionManager: React.FC<PromptVersionManagerProps> = ({
   }, [prompt, onPromptChange]);
 
   const loadInitialData = async () => {
-    if (!user?.email) return;
+    if (!user?.uid) return;
 
     setIsLoading(true);
     try {
-      // Load latest prompt
-      const latestPrompt = await loadLatestPrompt(user.email);
+      // Load latest prompt for this user
+      const latestPrompt = await loadLatestPrompt(user.uid);
       if (latestPrompt) {
         setPrompt(latestPrompt);
       } else {
-        // Load default prompt from file if no saved version exists
-        try {
-          const response = await fetch('/docs/gemini_instructions.md');
-          if (response.ok) {
-            const defaultPrompt = await response.text();
-            setPrompt(defaultPrompt);
-          }
-        } catch (error) {
-          console.error('Error loading default prompt:', error);
-        }
+        // No default prompt - user needs to create or download sample
+        setPrompt('');
       }
 
       // Load version history
@@ -90,10 +95,10 @@ const PromptVersionManager: React.FC<PromptVersionManagerProps> = ({
   };
 
   const loadVersionHistory = async () => {
-    if (!user?.email) return;
+    if (!user?.uid) return;
 
     try {
-      const history = await getPromptHistory(user.email);
+      const history = await getPromptHistory(user.uid);
       setVersions(history);
     } catch (error) {
       console.error('Error loading version history:', error);
@@ -101,7 +106,7 @@ const PromptVersionManager: React.FC<PromptVersionManagerProps> = ({
   };
 
   const handleSaveVersion = async () => {
-    if (!user?.email) {
+    if (!user?.uid) {
       toast.error('User not authenticated');
       return;
     }
@@ -114,10 +119,11 @@ const PromptVersionManager: React.FC<PromptVersionManagerProps> = ({
     setIsLoading(true);
     try {
       const versionNumber = await savePromptVersion(
-        user.email,
+        user.uid,
         prompt,
         evaluation,
-        aiModel
+        undefined, // Use default AI model from environment
+        user.email || undefined
       );
       
       toast.success(`Saved as version ${versionNumber}`);
@@ -135,29 +141,10 @@ const PromptVersionManager: React.FC<PromptVersionManagerProps> = ({
     setSelectedVersion(version);
     setPrompt(version.systemPrompt);
     setEvaluation(version.evaluation);
-    setAiModel(version.aiModel);
     setActiveTab('editor');
     toast.success(`Loaded version ${version.version}`);
   };
 
-  const handleUpdateEvaluation = async () => {
-    if (!selectedVersion?.id) {
-      toast.error('No version selected');
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      await updatePromptEvaluation(selectedVersion.id, evaluation);
-      toast.success('Evaluation updated');
-      await loadVersionHistory(); // Reload to show updated evaluation
-    } catch (error) {
-      console.error('Error updating evaluation:', error);
-      toast.error('Failed to update evaluation');
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const formatDate = (date: Date) => {
     return new Intl.DateTimeFormat('en-US', {
@@ -167,6 +154,17 @@ const PromptVersionManager: React.FC<PromptVersionManagerProps> = ({
       hour: '2-digit',
       minute: '2-digit'
     }).format(date);
+  };
+
+
+  const handleLoadSamplePrompt = () => {
+    if (samplePrompt.trim()) {
+      setPrompt(samplePrompt);
+      toast.success('Sample prompt loaded! You can now edit and save it.');
+    } else {
+      toast.error('Sample prompt file is empty or missing. Please add content to /public/sample_promtp.md');
+      console.error('Sample prompt file /public/sample_promtp.md is empty or missing');
+    }
   };
 
   return (
@@ -192,20 +190,6 @@ const PromptVersionManager: React.FC<PromptVersionManagerProps> = ({
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="aiModel">AI Model</Label>
-                <Select value={aiModel} onValueChange={setAiModel}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select AI model" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="gemini-2.5-flash-preview-04-17">Gemini 2.5 Flash</SelectItem>
-                    <SelectItem value="gemini-2.5-pro-preview-03-25">Gemini 2.5 Pro</SelectItem>
-                    <SelectItem value="gemini-1.5-pro">Gemini 1.5 Pro</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
                 <Label htmlFor="prompt">System Prompt</Label>
                 <Textarea
                   id="prompt"
@@ -227,6 +211,24 @@ const PromptVersionManager: React.FC<PromptVersionManagerProps> = ({
                 />
               </div>
 
+              {/* Sample prompt buttons - show when no prompt exists */}
+              {!prompt.trim() && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
+                  <p className="text-sm text-blue-800">
+                    <strong>Get started:</strong> Load a sample prompt or create your own from scratch.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button 
+                      onClick={handleLoadSamplePrompt} 
+                      variant="outline"
+                      className="flex-1 border-blue-300 text-blue-700 hover:bg-blue-100"
+                    >
+                      Load Sample Prompt
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               <div className="flex gap-2">
                 <Button 
                   onClick={handleSaveVersion} 
@@ -245,23 +247,6 @@ const PromptVersionManager: React.FC<PromptVersionManagerProps> = ({
                     </>
                   )}
                 </Button>
-                
-                {selectedVersion && (
-                  <Button 
-                    onClick={handleUpdateEvaluation} 
-                    disabled={isLoading}
-                    variant="outline"
-                  >
-                    {isLoading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <>
-                        <Star className="mr-2 h-4 w-4" />
-                        Update Evaluation
-                      </>
-                    )}
-                  </Button>
-                )}
               </div>
             </CardContent>
           </Card>
@@ -299,7 +284,6 @@ const PromptVersionManager: React.FC<PromptVersionManagerProps> = ({
                           <div className="space-y-1 flex-1">
                             <div className="flex items-center gap-2">
                               <Badge>v{version.version}</Badge>
-                              <Badge variant="outline">{version.aiModel}</Badge>
                               {version.version === Math.max(...versions.map(v => v.version)) && (
                                 <Badge variant="default">Latest</Badge>
                               )}
