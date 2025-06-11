@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-import ProfessionalBuyerChat from "@/components/ProfessionalBuyerChat";
+import ProcessAutomationChat from "@/components/ProfessionalBuyerChat";
 
 const Workbench = () => {
   const navigate = useNavigate();
@@ -12,7 +12,7 @@ const Workbench = () => {
   };
 
   return (
-    <ProfessionalBuyerChat onLogout={handleLogout} />
+    <ProcessAutomationChat onLogout={handleLogout} />
   );
 };
 

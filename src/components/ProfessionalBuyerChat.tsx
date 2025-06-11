@@ -14,7 +14,7 @@ import { loadLatestPrompt, createContinuousImprovementSession, addTechnicalLog, 
 import { sessionService, ChatSession } from '../lib/sessionService';
 import { erpApiService } from '../lib/erpApiService';
 
-interface ProfessionalBuyerChatProps {
+interface ProcessAutomationChatProps {
   onLogout?: () => void;
 }
 
@@ -95,7 +95,7 @@ const processTextWithCitations = (text: string, citationSources?: CitationSource
   return { originalText, formattedSources };
 };
 
-const ProfessionalBuyerChat: React.FC<ProfessionalBuyerChatProps> = ({ onLogout }) => {
+const ProcessAutomationChat: React.FC<ProcessAutomationChatProps> = ({ onLogout }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -134,24 +134,24 @@ const ProfessionalBuyerChat: React.FC<ProfessionalBuyerChatProps> = ({ onLogout 
             role: 'model',
             parts: [{
               text: isLikelyNewUser 
-                ? `🎉 **Welcome to Professional Buyer AI Assistant!**
+                ? `🎉 **Welcome to Agent Process Automation Assistant!**
 
-I'm here to transform how you handle procurement and purchasing. As your AI-powered procurement expert, I can help you:
+I'm here to transform how you handle business processes across various domains. As your AI-powered process automation expert, I can help you:
 
 **🎯 Get Started (recommended):**
 • **Load Sample Data**: Go to Admin panel → Load sample knowledge documents and ERP data to try me out
-• **Upload Your Files**: Add your own procurement policies and Excel purchase data  
+• **Upload Your Files**: Add your own business process documents and Excel data  
 • **Ask Questions**: "What suppliers do we use?" or "Find me laptop purchases from last quarter"
 
 **💡 My Special Capabilities:**
 ✅ Real-time access to your ERP/purchase data through advanced function calling
-✅ Analysis of your internal procurement documents and policies  
-✅ Professional buyer expertise for cost optimization and supplier management
+✅ Analysis of your internal business process documents and policies  
+✅ Process automation expertise for operational optimization and efficiency gains
 
 **Ready to explore?** Try asking me "Load some sample data so I can see what you can do" or visit the Admin panel to upload your own files!
 
 What would you like to start with?`
-                : `Hello! I'm your Professional Buyer AI Assistant. I'm here to help you optimize your procurement processes, negotiate better deals, and achieve significant cost savings.
+                : `Hello! I'm your Agent Process Automation Assistant. I'm here to help you optimize your business processes, automate workflows, and achieve significant operational improvements.
 
 📚 **Knowledge Base Loaded:** ${session.documentsUsed.length} document(s) available for reference.
 
@@ -176,7 +176,7 @@ What can I help you with today?`
           const welcomeMessage: Message = {
             role: 'model',
             parts: [{
-              text: "Hello! I'm your Professional Buyer AI Assistant. I'm here to help you optimize your procurement processes, negotiate better deals, and achieve significant cost savings. What can I help you with today?"
+              text: "Hello! I'm your Agent Process Automation Assistant. I'm here to help you optimize your business processes, automate workflows, and achieve significant operational improvements. What can I help you with today?"
             }]
           };
           setMessages([welcomeMessage]);
@@ -191,10 +191,10 @@ What can I help you with today?`
   }, [sessionActive, user, sessionInitializing]);
 
   const quickActions = [
-    "Use prenegotiated discount prices",
-    "Get approvals easily and from correct person", 
-    "Find preferred supplier and best price/quality",
-    "Create purchase orders easily and correctly"
+    "Analyze business process efficiency",
+    "Get approvals from correct stakeholders", 
+    "Find optimal workflows and best practices",
+    "Automate document processing tasks"
   ];
 
   const handleQuickAction = async (action: string) => {
@@ -595,10 +595,10 @@ What can I help you with today?`
         </div>
         <div className="flex items-center justify-center mb-4">
           <Bot className="h-8 w-8 mr-3" />
-          <h1 className="text-3xl font-bold">Professional Buyer AI Assistant</h1>
+          <h1 className="text-3xl font-bold">Agent Process Automation Assistant</h1>
         </div>
         <p className="text-gray-300 text-lg max-w-4xl mx-auto">
-          Get expert procurement advice, use prenegotiated prices from best suppliers, and do professional level procurement with ease
+          Get expert process automation advice, optimize workflows, and achieve operational excellence with intelligent AI assistance
         </p>
       </div>
 
@@ -823,4 +823,4 @@ What can I help you with today?`
   );
 };
 
-export default ProfessionalBuyerChat;
+export default ProcessAutomationChat;

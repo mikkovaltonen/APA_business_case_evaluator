@@ -68,8 +68,8 @@ const LoginForm = () => {
       <Card className="w-full max-w-md border-indigo-200 shadow-xl">
         <CardHeader className="space-y-2 text-center bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-t-lg">
           <Link to="/" className="flex flex-col items-center mb-6">
-            <span className="text-3xl font-bold tracking-wider text-white">PROCUREMENT AI</span>
-            <span className="text-indigo-100 text-sm font-medium">Agent Evaluator</span>
+            <span className="text-3xl font-bold tracking-wider text-white">AGENT PROCESS AUTOMATION</span>
+            <span className="text-indigo-100 text-sm font-medium">Business Benefit Evaluator</span>
           </Link>
           <CardTitle className="text-2xl font-bold text-white">Login</CardTitle>
           <p className="text-indigo-100">Enter your credentials to continue evaluation</p>
