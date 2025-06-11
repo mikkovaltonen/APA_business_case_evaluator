@@ -9,8 +9,8 @@ const Index = () => {
     <div className="min-h-screen bg-white font-sans">
       <nav className="flex justify-between items-center px-8 py-6 bg-white shadow-sm">
         <Link to="/" className="flex flex-col">
-          <span className="text-2xl font-light tracking-wide text-blue-900">AGENT PROCESS AUTOMATION</span>
-          <span className="text-blue-600 text-sm font-light">Business Benefit Evaluator</span>
+          <span className="text-2xl font-light tracking-wide text-blue-900">APA BUSINESS CASE</span>
+          <span className="text-blue-600 text-sm font-light">Saving Evaluator</span>
         </Link>
         <div className="flex gap-4">
           <Button
@@ -48,9 +48,16 @@ const Index = () => {
         </div>
 
         <section className="mt-32">
-          <h2 className="text-4xl font-light mb-16 text-blue-900">The Process Automation Challenge</h2>
-          <div className="mb-20 bg-white rounded-2xl shadow-xl border border-blue-100 overflow-hidden">
-            <img src="/problem.png" alt="Process Automation Cost Problem Analysis" className="w-full h-auto" />
+          <div className="text-center max-w-4xl mx-auto">
+            <h2 className="text-4xl font-light mb-8 text-blue-900">Business Challenge</h2>
+            <p className="text-2xl text-blue-800 font-light mb-8">
+              Problem is to assess cost savings of APA investment
+            </p>
+            <p className="text-xl text-blue-700 font-light leading-relaxed">
+              Organizations need to evaluate the return on investment for Agent Process Automation initiatives. 
+              This tool helps quantify potential benefits, identify optimization opportunities, and build 
+              compelling business cases for AI-driven process improvements.
+            </p>
           </div>
         </section>
 
